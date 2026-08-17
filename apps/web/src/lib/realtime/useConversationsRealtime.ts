@@ -80,6 +80,17 @@ export function useConversationsRealtime(
         setConversations((prev) =>
           prev.map((c) => (c.peerUserId === userId ? { ...c, isOnline: status === "online" } : c)),
         );
+      } else if (event.type === "conversation.updated") {
+        const { conversationId, name, avatarUrl } = event.payload;
+        setConversations((prev) =>
+          prev.map((c) => (c.id === conversationId ? { ...c, title: name ?? c.title, avatarUrl } : c)),
+        );
+      } else if (event.type === "conversation.muted_updated" && event.payload.userId === currentUserIdRef.current) {
+        const { conversationId, mutedUntil } = event.payload;
+        const isMuted = Boolean(mutedUntil && new Date(mutedUntil) > new Date());
+        setConversations((prev) => prev.map((c) => (c.id === conversationId ? { ...c, isMuted } : c)));
+      } else if (event.type === "conversation.member_removed" && event.payload.userId === currentUserIdRef.current) {
+        setConversations((prev) => prev.filter((c) => c.id !== event.payload.conversationId));
       }
     }
 

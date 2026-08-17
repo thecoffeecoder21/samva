@@ -82,7 +82,8 @@ export async function POST(request: Request, context: RouteContext) {
   const { conversationId } = await context.params;
   const user = await getOrCreateUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (!(await requireMembership(conversationId, user.id))) {
+  const membership = await requireMembership(conversationId, user.id);
+  if (!membership) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
@@ -95,6 +96,9 @@ export async function POST(request: Request, context: RouteContext) {
   const conversationRow = await getDb().query.conversations.findFirst({
     where: eq(conversations.id, conversationId),
   });
+  if (conversationRow?.type === "channel" && membership.role === "member") {
+    return NextResponse.json({ error: "Only channel owners and admins can post here" }, { status: 403 });
+  }
   if (conversationRow?.type === "direct") {
     const peer = await getDb().query.conversationMembers.findFirst({
       where: and(eq(conversationMembers.conversationId, conversationId), ne(conversationMembers.userId, user.id)),

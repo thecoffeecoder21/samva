@@ -1,9 +1,20 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import { Pin, Timer, X } from "lucide-react";
 import { TypingIndicator } from "@samva/ui";
-import type { Message, MessageAttachment, MessageEffect, MessageType, Poll, RealtimeEvent } from "@samva/types";
+import type {
+  ConversationRole,
+  ConversationType,
+  Message,
+  MessageAttachment,
+  MessageEffect,
+  MessageType,
+  MuteDuration,
+  Poll,
+  RealtimeEvent,
+} from "@samva/types";
 import { useConversationSocket } from "@/lib/realtime/useConversationSocket";
 import { classifyFile, uploadAttachment } from "@/lib/uploadFile";
 import { ChatHeader } from "./ChatHeader";
@@ -12,10 +23,12 @@ import { MessageComposer } from "./MessageComposer";
 import { ForwardDialog } from "./ForwardDialog";
 import { PollComposerDialog } from "./PollComposerDialog";
 import { MessageEffectOverlay } from "./MessageEffectOverlay";
+import { ManageConversationDialog } from "./ManageConversationDialog";
 
 export interface ChatWindowProps {
   conversationId: string;
   currentUserId: string;
+  conversationType: ConversationType;
   title: string;
   avatarUrl: string | null;
   peerUserId: string | null;
@@ -25,6 +38,10 @@ export interface ChatWindowProps {
   initialDidIBlockPeer: boolean;
   initialConversationBlocked: boolean;
   initialDisappearingSeconds: number | null;
+  initialDescription: string | null;
+  initialIsPublic: boolean;
+  initialMyRole: ConversationRole;
+  initialMutedUntil: string | null;
   initialMessages: Message[];
   memberNames: Record<string, string>;
 }
@@ -32,6 +49,7 @@ export interface ChatWindowProps {
 export function ChatWindow({
   conversationId,
   currentUserId,
+  conversationType,
   title,
   avatarUrl,
   peerUserId,
@@ -41,11 +59,23 @@ export function ChatWindow({
   initialDidIBlockPeer,
   initialConversationBlocked,
   initialDisappearingSeconds,
+  initialDescription,
+  initialIsPublic,
+  initialMyRole,
+  initialMutedUntil,
   initialMessages,
   memberNames,
 }: ChatWindowProps) {
+  const router = useRouter();
   const [messages, setMessages] = React.useState<Message[]>(initialMessages);
   const [disappearingSeconds, setDisappearingSeconds] = React.useState(initialDisappearingSeconds);
+  const [convName, setConvName] = React.useState(title);
+  const [convAvatarUrl, setConvAvatarUrl] = React.useState(avatarUrl);
+  const [convDescription, setConvDescription] = React.useState(initialDescription);
+  const [convIsPublic, setConvIsPublic] = React.useState(initialIsPublic);
+  const [myRole, setMyRole] = React.useState<ConversationRole>(initialMyRole);
+  const [mutedUntil, setMutedUntil] = React.useState(initialMutedUntil);
+  const [manageOpen, setManageOpen] = React.useState(false);
   const [replyTo, setReplyTo] = React.useState<Message | null>(null);
   const [editing, setEditing] = React.useState<Message | null>(null);
   const [forwarding, setForwarding] = React.useState<Message | null>(null);
@@ -162,9 +192,31 @@ export function ChatWindow({
           setConversationBlocked(event.payload.blocked);
           break;
         }
+        case "conversation.updated": {
+          setConvName(event.payload.name ?? "Untitled");
+          setConvAvatarUrl(event.payload.avatarUrl);
+          setConvDescription(event.payload.description);
+          setConvIsPublic(event.payload.isPublic);
+          break;
+        }
+        case "conversation.member_role_changed": {
+          if (event.payload.userId === currentUserId) setMyRole(event.payload.role);
+          break;
+        }
+        case "conversation.member_removed": {
+          if (event.payload.userId === currentUserId) {
+            router.push("/chats");
+            router.refresh();
+          }
+          break;
+        }
+        case "conversation.muted_updated": {
+          if (event.payload.userId === currentUserId) setMutedUntil(event.payload.mutedUntil);
+          break;
+        }
       }
     },
-    [currentUserId, peerUserId],
+    [currentUserId, peerUserId, router],
   );
 
   const { sendTyping } = useConversationSocket(conversationId, handleEvent);
@@ -389,6 +441,18 @@ export function ChatWindow({
     }).catch(() => {});
   }
 
+  async function setMute(duration: MuteDuration) {
+    const res = await fetch(`/api/conversations/${conversationId}/mute`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ duration }),
+    }).catch(() => null);
+    if (res?.ok) {
+      const data = (await res.json()) as { mutedUntil: string | null };
+      setMutedUntil(data.mutedUntil);
+    }
+  }
+
   async function saveEdit(messageId: string, content: string) {
     setEditing(null);
     const res = await fetch(`/api/messages/${messageId}`, {
@@ -449,12 +513,14 @@ export function ChatWindow({
     : undefined;
 
   const pinnedMessage = pinnedMessageId ? (messageById.get(pinnedMessageId) ?? null) : null;
+  const isMuted = Boolean(mutedUntil && new Date(mutedUntil) > new Date());
+  const isReadOnlyChannel = conversationType === "channel" && myRole === "member";
 
   return (
     <div className="flex h-full flex-col">
       <ChatHeader
-        title={title}
-        avatarUrl={avatarUrl}
+        title={convName}
+        avatarUrl={convAvatarUrl}
         subtitle={presenceSubtitle}
         isOnline={peerPresence.isOnline}
         showBlockOption={Boolean(peerUserId)}
@@ -462,6 +528,10 @@ export function ChatWindow({
         onToggleBlock={toggleBlock}
         disappearingSeconds={disappearingSeconds}
         onSetDisappearing={setDisappearing}
+        isMuted={isMuted}
+        onSetMute={setMute}
+        conversationType={conversationType}
+        onOpenInfo={conversationType !== "direct" ? () => setManageOpen(true) : undefined}
       />
       {disappearingSeconds && (
         <div className="flex items-center gap-2 border-b border-(--color-border) bg-(--color-surface-raised) px-4 py-2 text-xs text-(--color-text-secondary)">
@@ -517,6 +587,10 @@ export function ChatWindow({
             ? "You blocked this user. Unblock them to send messages again."
             : "You can't reply to this conversation."}
         </div>
+      ) : isReadOnlyChannel ? (
+        <div className="border-t border-(--color-border) bg-(--color-surface) px-4 py-3 text-center text-sm text-(--color-text-tertiary)">
+          Only owners and admins can post in this channel.
+        </div>
       ) : (
         <MessageComposer
           replyTo={replyTo}
@@ -544,6 +618,26 @@ export function ChatWindow({
         onCreate={sendPoll}
       />
       {activeEffect && <MessageEffectOverlay effect={activeEffect} onDone={() => setActiveEffect(null)} />}
+      {conversationType !== "direct" && (
+        <ManageConversationDialog
+          open={manageOpen}
+          onClose={() => setManageOpen(false)}
+          conversationId={conversationId}
+          type={conversationType}
+          currentUserId={currentUserId}
+          myRole={myRole}
+          name={convName}
+          avatarUrl={convAvatarUrl}
+          description={convDescription}
+          isPublic={convIsPublic}
+          onUpdated={(patch) => {
+            if (patch.name !== undefined) setConvName(patch.name);
+            if (patch.avatarUrl !== undefined) setConvAvatarUrl(patch.avatarUrl);
+            if (patch.description !== undefined) setConvDescription(patch.description);
+            if (patch.isPublic !== undefined) setConvIsPublic(patch.isPublic);
+          }}
+        />
+      )}
     </div>
   );
 }

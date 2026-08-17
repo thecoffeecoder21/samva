@@ -1,5 +1,5 @@
 import "server-only";
-import { and, count, desc, eq, gt, inArray, ne } from "drizzle-orm";
+import { and, count, desc, eq, gt, ilike, inArray, ne, or } from "drizzle-orm";
 import {
   conversationMembers,
   conversations,
@@ -9,9 +9,10 @@ import {
   profiles,
   users,
 } from "@samva/db";
+import type { ConversationMemberSummary, ConversationRole, ConversationType } from "@samva/types";
 import { getOnlineStatuses } from "./presence";
 import { didIBlockThem, isBlocked } from "./blocks";
-import type { ConversationSummary } from "./view-models";
+import type { ChannelSummary, ConversationSummary } from "./view-models";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -114,8 +115,14 @@ async function getDirectPeers(db: Db, conversationIds: string[], userId: string)
 
 export interface ConversationHeader {
   id: string;
+  type: ConversationType;
   title: string;
   avatarUrl: string | null;
+  description: string | null;
+  isPublic: boolean;
+  memberCount: number;
+  myRole: ConversationRole;
+  mutedUntil: string | null;
   peerUserId: string | null;
   isOnline: boolean;
   lastSeenAt: string | null;
@@ -137,11 +144,24 @@ export async function getConversationHeader(conversationId: string, userId: stri
   const conversation = await db.query.conversations.findFirst({ where: eq(conversations.id, conversationId) });
   if (!conversation) return null;
 
+  const mutedUntil = membership.mutedUntil?.toISOString() ?? null;
+
   if (conversation.type !== "direct") {
+    const [row] = await db
+      .select({ value: count() })
+      .from(conversationMembers)
+      .where(eq(conversationMembers.conversationId, conversationId));
+
     return {
       id: conversation.id,
+      type: conversation.type,
       title: conversation.name ?? "Untitled",
       avatarUrl: conversation.avatarUrl,
+      description: conversation.description,
+      isPublic: conversation.isPublic,
+      memberCount: row?.value ?? 1,
+      myRole: membership.role,
+      mutedUntil,
       peerUserId: null,
       isOnline: false,
       lastSeenAt: null,
@@ -163,8 +183,14 @@ export async function getConversationHeader(conversationId: string, userId: stri
 
   return {
     id: conversation.id,
+    type: "direct",
     title: peer?.displayName ?? "Unknown user",
     avatarUrl: peer?.avatarUrl ?? null,
+    description: null,
+    isPublic: false,
+    memberCount: 2,
+    myRole: membership.role,
+    mutedUntil,
     peerUserId: peer?.userId ?? null,
     isOnline: peer ? (onlineStatuses.get(peer.userId) ?? false) : false,
     lastSeenAt: peerProfile?.lastSeenAt?.toISOString() ?? null,
@@ -173,6 +199,94 @@ export async function getConversationHeader(conversationId: string, userId: stri
     conversationBlocked,
     disappearingSeconds: conversation.disappearingSeconds,
   };
+}
+
+const ROLE_RANK: Record<ConversationRole, number> = { owner: 0, admin: 1, member: 2 };
+
+export async function getConversationMembers(conversationId: string): Promise<ConversationMemberSummary[]> {
+  const db = getDb();
+  const rows = await db
+    .select({
+      userId: conversationMembers.userId,
+      role: conversationMembers.role,
+      username: profiles.username,
+      displayName: profiles.displayName,
+      avatarUrl: profiles.avatarUrl,
+    })
+    .from(conversationMembers)
+    .innerJoin(profiles, eq(profiles.userId, conversationMembers.userId))
+    .where(eq(conversationMembers.conversationId, conversationId));
+
+  return rows.sort((a, b) => ROLE_RANK[a.role] - ROLE_RANK[b.role] || a.displayName.localeCompare(b.displayName));
+}
+
+async function hydrateChannelSummaries(
+  db: Db,
+  channelRows: (typeof conversations.$inferSelect)[],
+  userId: string,
+): Promise<ChannelSummary[]> {
+  if (channelRows.length === 0) return [];
+  const ids = channelRows.map((c) => c.id);
+
+  const memberRows = await db
+    .select({ conversationId: conversationMembers.conversationId, userId: conversationMembers.userId, role: conversationMembers.role })
+    .from(conversationMembers)
+    .where(inArray(conversationMembers.conversationId, ids));
+
+  const countByChannel = new Map<string, number>();
+  const roleByChannelForUser = new Map<string, ConversationRole>();
+  for (const m of memberRows) {
+    countByChannel.set(m.conversationId, (countByChannel.get(m.conversationId) ?? 0) + 1);
+    if (m.userId === userId) roleByChannelForUser.set(m.conversationId, m.role);
+  }
+
+  return channelRows.map((c) => ({
+    id: c.id,
+    name: c.name ?? "Untitled channel",
+    avatarUrl: c.avatarUrl,
+    description: c.description,
+    isPublic: c.isPublic,
+    memberCount: countByChannel.get(c.id) ?? 0,
+    isFollowing: roleByChannelForUser.has(c.id),
+    myRole: roleByChannelForUser.get(c.id) ?? null,
+  }));
+}
+
+/** Public channel directory for the Discover page, optionally filtered by a search term. */
+export async function getChannelDirectory(userId: string, query?: string): Promise<ChannelSummary[]> {
+  const db = getDb();
+  const trimmed = query?.trim();
+  const conditions = [eq(conversations.type, "channel"), eq(conversations.isPublic, true)];
+  if (trimmed) {
+    conditions.push(
+      or(ilike(conversations.name, `%${trimmed}%`), ilike(conversations.description, `%${trimmed}%`))!,
+    );
+  }
+
+  const rows = await db
+    .select()
+    .from(conversations)
+    .where(and(...conditions))
+    .orderBy(desc(conversations.createdAt))
+    .limit(50);
+
+  return hydrateChannelSummaries(db, rows, userId);
+}
+
+/** Channels (any visibility) the user is a member/follower of, for the Communities page. */
+export async function getMyChannels(userId: string): Promise<ChannelSummary[]> {
+  const db = getDb();
+  const rows = await db
+    .select({ conversation: conversations })
+    .from(conversationMembers)
+    .innerJoin(conversations, eq(conversations.id, conversationMembers.conversationId))
+    .where(and(eq(conversationMembers.userId, userId), eq(conversations.type, "channel")));
+
+  return hydrateChannelSummaries(
+    db,
+    rows.map((r) => r.conversation),
+    userId,
+  );
 }
 
 export interface PublicProfile {

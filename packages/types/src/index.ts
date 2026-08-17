@@ -41,6 +41,8 @@ export interface Conversation {
   type: ConversationType;
   name: string | null;
   avatarUrl: string | null;
+  description: string | null;
+  isPublic: boolean;
   lastMessageAt: string | null;
   createdAt: string;
 }
@@ -53,6 +55,16 @@ export interface ConversationMember {
   mutedUntil: string | null;
   lastReadMessageId: ID | null;
 }
+
+export interface ConversationMemberSummary {
+  userId: ID;
+  username: string;
+  displayName: string;
+  avatarUrl: string | null;
+  role: ConversationRole;
+}
+
+export type MuteDuration = "1h" | "8h" | "always" | "off";
 
 export interface Reaction {
   emoji: string;
@@ -142,4 +154,12 @@ export type RealtimeEvent =
   | { type: "conversation.pinned"; payload: { conversationId: ID; messageId: ID | null } }
   | { type: "conversation.blocked"; payload: { conversationId: ID; blockedUserId: ID; blocked: boolean } }
   | { type: "poll.voted"; payload: { conversationId: ID; messageId: ID; poll: Poll } }
-  | { type: "conversation.disappearing_updated"; payload: { conversationId: ID; disappearingSeconds: number | null } };
+  | { type: "conversation.disappearing_updated"; payload: { conversationId: ID; disappearingSeconds: number | null } }
+  | {
+      type: "conversation.updated";
+      payload: { conversationId: ID; name: string | null; avatarUrl: string | null; description: string | null; isPublic: boolean };
+    }
+  | { type: "conversation.member_added"; payload: { conversationId: ID; member: ConversationMemberSummary } }
+  | { type: "conversation.member_removed"; payload: { conversationId: ID; userId: ID } }
+  | { type: "conversation.member_role_changed"; payload: { conversationId: ID; userId: ID; role: ConversationRole } }
+  | { type: "conversation.muted_updated"; payload: { conversationId: ID; userId: ID; mutedUntil: string | null } };

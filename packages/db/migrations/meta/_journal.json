@@ -50,6 +50,13 @@
       "when": 1786964801972,
       "tag": "0006_eager_forge",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1786968254166,
+      "tag": "0007_thankful_violations",
+      "breakpoints": true
     }
   ]
 }

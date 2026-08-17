@@ -33,11 +33,14 @@ export async function notifyOtherMembers(
 
   const db = getDb();
   const members = await db
-    .select({ userId: conversationMembers.userId })
+    .select({ userId: conversationMembers.userId, mutedUntil: conversationMembers.mutedUntil })
     .from(conversationMembers)
     .where(eq(conversationMembers.conversationId, conversationId));
 
-  const recipientIds = members.map((m) => m.userId).filter((id) => id !== senderId);
+  const now = new Date();
+  const recipientIds = members
+    .filter((m) => m.userId !== senderId && !(m.mutedUntil && m.mutedUntil > now))
+    .map((m) => m.userId);
   if (recipientIds.length === 0) return;
 
   const subscriptions = await db

@@ -25,6 +25,7 @@ export default async function ConversationPage({
     <ChatWindow
       conversationId={conversationId}
       currentUserId={user.id}
+      conversationType={header.type}
       title={header.title}
       avatarUrl={header.avatarUrl}
       peerUserId={header.peerUserId}
@@ -34,6 +35,10 @@ export default async function ConversationPage({
       initialDidIBlockPeer={header.didIBlockPeer}
       initialConversationBlocked={header.conversationBlocked}
       initialDisappearingSeconds={header.disappearingSeconds}
+      initialDescription={header.description}
+      initialIsPublic={header.isPublic}
+      initialMyRole={header.myRole}
+      initialMutedUntil={header.mutedUntil}
       initialMessages={messages}
       memberNames={memberNames}
     />

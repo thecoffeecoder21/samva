@@ -49,6 +49,12 @@ export const conversations = pgTable("conversations", {
   type: text("type", { enum: ["direct", "group", "channel"] }).notNull(),
   name: text("name"),
   avatarUrl: text("avatar_url"),
+  // Group/channel bio shown in the info dialog and (for channels) the
+  // Discover/Communities directory listing. Unused for direct conversations.
+  description: text("description"),
+  // Channels only: true makes the channel discoverable/joinable from the
+  // Discover directory. Groups stay invite-only regardless of this flag.
+  isPublic: boolean("is_public").default(false).notNull(),
   createdBy: uuid("created_by")
     .notNull()
     .references(() => users.id),
