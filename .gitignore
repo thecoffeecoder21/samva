@@ -1,0 +1,20 @@
+node_modules
+.turbo
+.next
+dist
+build
+.env
+.env.*
+!.env.example
+.vercel
+*.tsbuildinfo
+.DS_Store
+
+.vercel
+.env*
+
+# Claude Code / agent tooling — local to this machine, not app source
+.claude
+.agents
+skills-lock.json
+Screenshot*.png

@@ -1,0 +1,13 @@
+@import "@samva/ui/theme.css";
+
+/*
+ * Tailwind v4's automatic content detection walks from this file's project
+ * root and does not follow the pnpm symlink into a sibling workspace
+ * package, so classes used only inside @samva/ui's source (never as an
+ * identical string in apps/web) would otherwise never be generated.
+ */
+@source "../../../../packages/ui/src";
+
+@theme inline {
+  --font-sans: var(--font-inter), var(--font-noto-devanagari), system-ui, sans-serif;
+}

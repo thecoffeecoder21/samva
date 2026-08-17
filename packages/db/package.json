@@ -1,0 +1,25 @@
+{
+  "name": "@samva/db",
+  "version": "0.0.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "generate": "dotenv -e ../../.env.local -- drizzle-kit generate",
+    "migrate": "dotenv -e ../../.env.local -- drizzle-kit migrate",
+    "push": "dotenv -e ../../.env.local -- drizzle-kit push",
+    "studio": "dotenv -e ../../.env.local -- drizzle-kit studio"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.0.2",
+    "drizzle-orm": "^0.44.6"
+  },
+  "devDependencies": {
+    "@samva/config": "workspace:*",
+    "@types/node": "^20",
+    "dotenv-cli": "^8.0.0",
+    "drizzle-kit": "^0.31.9",
+    "typescript": "^5.9.3"
+  }
+}
