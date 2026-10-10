@@ -91,6 +91,9 @@ export function useConversationsRealtime(
         setConversations((prev) => prev.map((c) => (c.id === conversationId ? { ...c, isMuted } : c)));
       } else if (event.type === "conversation.member_removed" && event.payload.userId === currentUserIdRef.current) {
         setConversations((prev) => prev.filter((c) => c.id !== event.payload.conversationId));
+      } else if (event.type === "conversation.list_state_updated" && event.payload.userId === currentUserIdRef.current) {
+        const { conversationId, isPinned, isArchived } = event.payload;
+        setConversations((prev) => prev.map((c) => (c.id === conversationId ? { ...c, isPinned, isArchived } : c)));
       }
     }
 

@@ -2,9 +2,10 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Pin, Timer, X } from "lucide-react";
+import { Pin, Timer, X, ArrowDown, UploadCloud } from "lucide-react";
 import { TypingIndicator } from "@samva/ui";
 import type {
+  ConversationMemberSummary,
   ConversationRole,
   ConversationType,
   Message,
@@ -24,6 +25,8 @@ import { ForwardDialog } from "./ForwardDialog";
 import { PollComposerDialog } from "./PollComposerDialog";
 import { MessageEffectOverlay } from "./MessageEffectOverlay";
 import { ManageConversationDialog } from "./ManageConversationDialog";
+import { ThreadPanel } from "./ThreadPanel";
+import { ReportMessageDialog } from "./ReportMessageDialog";
 
 export interface ChatWindowProps {
   conversationId: string;
@@ -43,7 +46,8 @@ export interface ChatWindowProps {
   initialMyRole: ConversationRole;
   initialMutedUntil: string | null;
   initialMessages: Message[];
-  memberNames: Record<string, string>;
+  members: ConversationMemberSummary[];
+  currentUsername?: string;
 }
 
 export function ChatWindow({
@@ -64,8 +68,22 @@ export function ChatWindow({
   initialMyRole,
   initialMutedUntil,
   initialMessages,
-  memberNames,
+  members,
+  currentUsername,
 }: ChatWindowProps) {
+  const memberNames = React.useMemo(
+    () => Object.fromEntries(members.map((m) => [m.userId, m.displayName])),
+    [members],
+  );
+  const [openThreadRootId, setOpenThreadRootId] = React.useState<string | null>(null);
+  const [reportingMessage, setReportingMessage] = React.useState<Message | null>(null);
+  const threadListenersRef = React.useRef<Set<(event: RealtimeEvent) => void>>(new Set());
+  const subscribeThreadEvents = React.useCallback((handler: (event: RealtimeEvent) => void) => {
+    threadListenersRef.current.add(handler);
+    return () => {
+      threadListenersRef.current.delete(handler);
+    };
+  }, []);
   const router = useRouter();
   const [messages, setMessages] = React.useState<Message[]>(initialMessages);
   const [disappearingSeconds, setDisappearingSeconds] = React.useState(initialDisappearingSeconds);
@@ -88,6 +106,11 @@ export function ChatWindow({
   const [pinnedMessageId, setPinnedMessageId] = React.useState(initialPinnedMessageId);
   const [didIBlockPeer, setDidIBlockPeer] = React.useState(initialDidIBlockPeer);
   const [conversationBlocked, setConversationBlocked] = React.useState(initialConversationBlocked);
+  const [isNearBottom, setIsNearBottom] = React.useState(true);
+  const [newMessageCount, setNewMessageCount] = React.useState(0);
+  const [isDraggingFile, setIsDraggingFile] = React.useState(false);
+  const dragCounterRef = React.useRef(0);
+  const isNearBottomRef = React.useRef(true);
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const typingClearTimers = React.useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const messagesRef = React.useRef(messages);
@@ -214,16 +237,49 @@ export function ChatWindow({
           if (event.payload.userId === currentUserId) setMutedUntil(event.payload.mutedUntil);
           break;
         }
+        case "message.thread_reply": {
+          const { rootMessageId, threadReplyCount, lastThreadReplyAt } = event.payload;
+          setMessages((prev) =>
+            prev.map((m) => (m.id === rootMessageId ? { ...m, threadReplyCount, lastThreadReplyAt } : m)),
+          );
+          break;
+        }
       }
+      for (const listener of threadListenersRef.current) listener(event);
     },
     [currentUserId, peerUserId, router],
   );
 
   const { sendTyping } = useConversationSocket(conversationId, handleEvent);
 
+  const prevMessageCountRef = React.useRef(messages.length);
   React.useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [messages.length]);
+    const delta = messages.length - prevMessageCountRef.current;
+    prevMessageCountRef.current = messages.length;
+    if (delta <= 0) return;
+    const last = messages[messages.length - 1];
+    const isOwnMessage = last?.senderId === currentUserId;
+    if (isOwnMessage || isNearBottomRef.current) {
+      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+      setNewMessageCount(0);
+    } else {
+      setNewMessageCount((n) => n + delta);
+    }
+  }, [messages, currentUserId]);
+
+  function handleScroll() {
+    const el = scrollRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 150;
+    isNearBottomRef.current = nearBottom;
+    setIsNearBottom(nearBottom);
+    if (nearBottom) setNewMessageCount(0);
+  }
+
+  function scrollToBottom() {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    setNewMessageCount(0);
+  }
 
   // Hides a disappearing message on this device the instant its timer runs
   // out, without waiting for the daily cron purge or a page reload —
@@ -270,6 +326,9 @@ export function ChatWindow({
       expiresAt: null,
       effect: payload.effect ?? null,
       replyToId,
+      threadRootId: null,
+      threadReplyCount: 0,
+      lastThreadReplyAt: null,
       reactions: [],
       status: "sending",
       createdAt: new Date().toISOString(),
@@ -365,6 +424,9 @@ export function ChatWindow({
       expiresAt: null,
       effect: null,
       replyToId: null,
+      threadRootId: null,
+      threadReplyCount: 0,
+      lastThreadReplyAt: null,
       reactions: [],
       status: "sending",
       createdAt: new Date().toISOString(),
@@ -487,6 +549,45 @@ export function ChatWindow({
     }
   }
 
+  function editLastOwnMessage() {
+    const lastOwnText = [...messages].reverse().find((m) => m.senderId === currentUserId && m.type === "text" && !m.deletedAt);
+    if (lastOwnText) setEditing(lastOwnText);
+  }
+
+  function handleDragEnter(e: React.DragEvent) {
+    if (!e.dataTransfer.types.includes("Files")) return;
+    e.preventDefault();
+    dragCounterRef.current += 1;
+    setIsDraggingFile(true);
+  }
+
+  function handleDragLeave(e: React.DragEvent) {
+    if (!e.dataTransfer.types.includes("Files")) return;
+    e.preventDefault();
+    dragCounterRef.current -= 1;
+    if (dragCounterRef.current <= 0) {
+      dragCounterRef.current = 0;
+      setIsDraggingFile(false);
+    }
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    dragCounterRef.current = 0;
+    setIsDraggingFile(false);
+    const file = e.dataTransfer.files[0];
+    if (file) sendFile(file);
+  }
+
+  async function reportMessage(message: Message, reason: string) {
+    setReportingMessage(null);
+    await fetch(`/api/messages/${message.id}/report`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason }),
+    }).catch(() => {});
+  }
+
   async function react(message: Message, emoji: string) {
     const res = await fetch(`/api/messages/${message.id}/reactions`, {
       method: "POST",
@@ -517,7 +618,20 @@ export function ChatWindow({
   const isReadOnlyChannel = conversationType === "channel" && myRole === "member";
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full">
+    <div
+      className="relative flex h-full min-w-0 flex-1 flex-col"
+      onDragEnter={handleDragEnter}
+      onDragOver={(e) => e.dataTransfer.types.includes("Files") && e.preventDefault()}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {isDraggingFile && (
+        <div className="pointer-events-none absolute inset-0 z-30 flex flex-col items-center justify-center gap-2 border-2 border-dashed border-(--color-primary) bg-(--color-bg)/90 text-(--color-primary)">
+          <UploadCloud size={32} />
+          <p className="text-sm font-medium">Drop to send</p>
+        </div>
+      )}
       <ChatHeader
         title={convName}
         avatarUrl={convAvatarUrl}
@@ -555,26 +669,51 @@ export function ChatWindow({
           </button>
         </div>
       )}
-      <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
-        {messages.map((m) => (
-          <MessageBubble
-            key={m.id}
-            message={m}
-            isOwn={m.senderId === currentUserId}
-            isReadByPeer={Boolean(peerUserId) && BigInt(m.sequence) <= peerReadSequence}
-            isPinned={pinnedMessageId === m.id}
-            senderName={memberNames[m.senderId]}
-            replyToMessage={m.replyToId ? (messageById.get(m.replyToId) ?? null) : null}
-            currentUserId={currentUserId}
-            onReply={setReplyTo}
-            onReact={react}
-            onEdit={setEditing}
-            onDelete={deleteMessage}
-            onForward={setForwarding}
-            onTogglePin={togglePin}
-            onVote={votePoll}
-          />
-        ))}
+      <div className="relative min-h-0 flex-1">
+        <div
+          ref={scrollRef}
+          onScroll={handleScroll}
+          data-testid="message-list"
+          className="h-full space-y-3 overflow-y-auto px-4 py-4"
+        >
+          {messages.map((m) => (
+            <MessageBubble
+              key={m.id}
+              message={m}
+              isOwn={m.senderId === currentUserId}
+              isReadByPeer={Boolean(peerUserId) && BigInt(m.sequence) <= peerReadSequence}
+              isPinned={pinnedMessageId === m.id}
+              senderName={memberNames[m.senderId]}
+              replyToMessage={m.replyToId ? (messageById.get(m.replyToId) ?? null) : null}
+              currentUserId={currentUserId}
+              members={members}
+              currentUsername={currentUsername}
+              onReply={setReplyTo}
+              onReact={react}
+              onEdit={setEditing}
+              onDelete={deleteMessage}
+              onForward={setForwarding}
+              onTogglePin={togglePin}
+              onVote={votePoll}
+              onOpenThread={(msg) => setOpenThreadRootId(msg.id)}
+              onReport={conversationType === "channel" ? setReportingMessage : undefined}
+            />
+          ))}
+        </div>
+        {!isNearBottom && (
+          <button
+            onClick={scrollToBottom}
+            aria-label="Scroll to latest messages"
+            className="absolute bottom-3 right-3 flex items-center gap-1.5 rounded-(--radius-full) border border-(--color-border) bg-(--color-surface) px-3 py-1.5 text-xs font-medium text-(--color-text-primary) shadow-(--shadow-md) hover:bg-(--color-surface-raised)"
+          >
+            {newMessageCount > 0 && (
+              <span className="rounded-(--radius-full) bg-(--color-primary) px-1.5 py-0.5 text-[10px] text-(--color-primary-fg)">
+                {newMessageCount}
+              </span>
+            )}
+            <ArrowDown size={14} />
+          </button>
+        )}
       </div>
       {typingNames.length > 0 && (
         <div className="px-4 pb-1">
@@ -603,7 +742,9 @@ export function ChatWindow({
           onSendFile={sendFile}
           onSendVoiceNote={sendVoiceNote}
           onCreatePoll={() => setPollComposerOpen(true)}
+          onEditLast={editLastOwnMessage}
           uploadProgress={uploadProgress}
+          members={members}
         />
       )}
       <ForwardDialog
@@ -638,6 +779,25 @@ export function ChatWindow({
           }}
         />
       )}
+      <ReportMessageDialog
+        open={Boolean(reportingMessage)}
+        onClose={() => setReportingMessage(null)}
+        onSubmit={(reason) => reportingMessage && reportMessage(reportingMessage, reason)}
+      />
+    </div>
+    {openThreadRootId && (
+      <ThreadPanel
+        open={Boolean(openThreadRootId)}
+        onClose={() => setOpenThreadRootId(null)}
+        conversationId={conversationId}
+        rootMessageId={openThreadRootId}
+        currentUserId={currentUserId}
+        currentUsername={currentUsername}
+        members={members}
+        memberNames={memberNames}
+        onEvent={subscribeThreadEvents}
+      />
+    )}
     </div>
   );
 }

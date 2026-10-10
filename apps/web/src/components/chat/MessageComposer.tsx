@@ -2,9 +2,13 @@
 
 import * as React from "react";
 import { Paperclip, Send, Smile, Mic, Square, X, BarChart3, Sparkles } from "lucide-react";
-import { IconButton, cn } from "@samva/ui";
-import type { Message, MessageEffect } from "@samva/types";
+import { Avatar, IconButton, cn } from "@samva/ui";
+import type { ConversationMemberSummary, Message, MessageEffect } from "@samva/types";
 import { useT } from "@/lib/i18n/I18nProvider";
+import { EmojiPicker } from "./EmojiPicker";
+
+/** Matches an in-progress "@partial" mention token ending at the caret. */
+const MENTION_TRIGGER = /(?:^|\s)@([a-zA-Z0-9_]{0,20})$/;
 
 const EFFECT_OPTIONS: { effect: MessageEffect; emoji: string; label: string }[] = [
   { effect: "confetti", emoji: "🎉", label: "Confetti" },
@@ -24,7 +28,9 @@ export interface MessageComposerProps {
   onSendFile: (file: File) => void;
   onSendVoiceNote: (blob: Blob, durationMs: number, mimeType: string) => void;
   onCreatePoll: () => void;
+  onEditLast?: () => void;
   uploadProgress: number | null;
+  members?: ConversationMemberSummary[];
 }
 
 export function MessageComposer({
@@ -38,7 +44,9 @@ export function MessageComposer({
   onSendFile,
   onSendVoiceNote,
   onCreatePoll,
+  onEditLast,
   uploadProgress,
+  members = [],
 }: MessageComposerProps) {
   const t = useT();
   const [value, setValue] = React.useState("");
@@ -46,6 +54,46 @@ export function MessageComposer({
   const [effectPickerOpen, setEffectPickerOpen] = React.useState(false);
   const typingTimeout = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+  const [mentionQuery, setMentionQuery] = React.useState<string | null>(null);
+  const [mentionIndex, setMentionIndex] = React.useState(0);
+  const [emojiPickerOpen, setEmojiPickerOpen] = React.useState(false);
+  const caretPosRef = React.useRef(0);
+
+  const mentionCandidates = React.useMemo(() => {
+    if (mentionQuery === null) return [];
+    const q = mentionQuery.toLowerCase();
+    return members
+      .filter((m) => m.username.toLowerCase().startsWith(q) || m.displayName.toLowerCase().startsWith(q))
+      .slice(0, 6);
+  }, [mentionQuery, members]);
+
+  function updateMentionState(text: string, caret: number) {
+    const match = MENTION_TRIGGER.exec(text.slice(0, caret));
+    if (match) {
+      setMentionQuery(match[1] ?? "");
+      setMentionIndex(0);
+    } else {
+      setMentionQuery(null);
+    }
+  }
+
+  function selectMention(member: ConversationMemberSummary) {
+    const el = textareaRef.current;
+    const caret = el?.selectionStart ?? value.length;
+    const before = value.slice(0, caret);
+    const match = MENTION_TRIGGER.exec(before);
+    if (!match) return;
+    const start = before.length - match[0].length + (match[0].startsWith(" ") ? 1 : 0);
+    const next = `${value.slice(0, start)}@${member.username} ${value.slice(caret)}`;
+    setValue(next);
+    setMentionQuery(null);
+    requestAnimationFrame(() => {
+      const pos = start + member.username.length + 2;
+      el?.focus();
+      el?.setSelectionRange(pos, pos);
+    });
+  }
   const [recording, setRecording] = React.useState(false);
   const [recordingSeconds, setRecordingSeconds] = React.useState(0);
   const recorderRef = React.useRef<MediaRecorder | null>(null);
@@ -64,8 +112,9 @@ export function MessageComposer({
     setValue(editingId ? (editingMessage?.content ?? "") : "");
   }
 
-  function handleChange(next: string) {
+  function handleChange(next: string, caret: number) {
     setValue(next);
+    updateMentionState(next, caret);
     onTyping(true);
     clearTimeout(typingTimeout.current);
     typingTimeout.current = setTimeout(() => onTyping(false), 2000);
@@ -81,8 +130,23 @@ export function MessageComposer({
       setSelectedEffect(null);
     }
     setValue("");
+    setMentionQuery(null);
+    setEmojiPickerOpen(false);
+    caretPosRef.current = 0;
     clearTimeout(typingTimeout.current);
     onTyping(false);
+  }
+
+  function insertEmoji(emoji: string) {
+    const caret = caretPosRef.current;
+    const next = `${value.slice(0, caret)}${emoji}${value.slice(caret)}`;
+    setValue(next);
+    const pos = caret + emoji.length;
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(pos, pos);
+      caretPosRef.current = pos;
+    });
   }
 
   function handleFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
@@ -218,22 +282,117 @@ export function MessageComposer({
               </div>
             )}
           </div>
-          <IconButton aria-label="Emoji picker (coming soon)" title="Emoji picker is coming soon" disabled>
-            <Smile size={20} strokeWidth={1.75} />
-          </IconButton>
-          <textarea
-            value={value}
-            onChange={(e) => handleChange(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                submit();
-              }
-            }}
-            placeholder={t("composer.placeholder")}
-            rows={1}
-            className="max-h-32 flex-1 resize-none rounded-(--radius-md) border border-(--color-border) bg-(--color-bg) px-3 py-2 text-sm text-(--color-text-primary) placeholder:text-(--color-text-tertiary) focus:border-(--color-primary) focus:outline-none"
-          />
+          <div className="relative">
+            <IconButton
+              aria-label="Emoji picker"
+              onClick={() => setEmojiPickerOpen((v) => !v)}
+              className={emojiPickerOpen ? "text-(--color-primary)" : undefined}
+            >
+              <Smile size={20} strokeWidth={1.75} />
+            </IconButton>
+            {emojiPickerOpen && (
+              <EmojiPicker
+                onSelect={(emoji) => insertEmoji(emoji)}
+                onClose={() => setEmojiPickerOpen(false)}
+              />
+            )}
+          </div>
+          <div className="relative flex-1">
+            {mentionQuery !== null && mentionCandidates.length > 0 && (
+              <div
+                role="listbox"
+                aria-label="Mention a member"
+                className="absolute bottom-full left-0 z-10 mb-1 w-56 overflow-hidden rounded-(--radius-md) border border-(--color-border) bg-(--color-surface) py-1 shadow-(--shadow-md)"
+              >
+                {mentionCandidates.map((member, i) => (
+                  <button
+                    key={member.userId}
+                    type="button"
+                    role="option"
+                    aria-selected={i === mentionIndex}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      selectMention(member);
+                    }}
+                    className={cn(
+                      "flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm hover:bg-(--color-surface-raised)",
+                      i === mentionIndex && "bg-(--color-surface-raised)",
+                    )}
+                  >
+                    <Avatar src={member.avatarUrl} name={member.displayName} size="sm" />
+                    <span className="min-w-0 flex-1 truncate">
+                      <span className="font-medium text-(--color-text-primary)">{member.displayName}</span>{" "}
+                      <span className="text-(--color-text-tertiary)">@{member.username}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <textarea
+              ref={textareaRef}
+              value={value}
+              onChange={(e) => {
+                caretPosRef.current = e.target.selectionStart;
+                handleChange(e.target.value, e.target.selectionStart);
+              }}
+              onClick={(e) => {
+                caretPosRef.current = e.currentTarget.selectionStart;
+              }}
+              onKeyUp={(e) => {
+                caretPosRef.current = e.currentTarget.selectionStart;
+              }}
+              onPaste={(e) => {
+                const file = Array.from(e.clipboardData.items)
+                  .find((item) => item.kind === "file")
+                  ?.getAsFile();
+                if (file) {
+                  e.preventDefault();
+                  onSendFile(file);
+                }
+              }}
+              onKeyDown={(e) => {
+                if (mentionQuery !== null && mentionCandidates.length > 0) {
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setMentionIndex((i) => (i + 1) % mentionCandidates.length);
+                    return;
+                  }
+                  if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setMentionIndex((i) => (i - 1 + mentionCandidates.length) % mentionCandidates.length);
+                    return;
+                  }
+                  if (e.key === "Enter" || e.key === "Tab") {
+                    e.preventDefault();
+                    selectMention(mentionCandidates[mentionIndex]!);
+                    return;
+                  }
+                  if (e.key === "Escape") {
+                    setMentionQuery(null);
+                    return;
+                  }
+                }
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  submit();
+                  return;
+                }
+                if (e.key === "Escape" && (editingMessage || replyTo)) {
+                  e.preventDefault();
+                  if (editingMessage) onCancelEdit?.();
+                  else onCancelReply?.();
+                  return;
+                }
+                if (e.key === "ArrowUp" && value === "" && !editingMessage && onEditLast) {
+                  e.preventDefault();
+                  onEditLast();
+                }
+              }}
+              placeholder={t("composer.placeholder")}
+              rows={1}
+              className="max-h-32 w-full resize-none rounded-(--radius-md) border border-(--color-border) bg-(--color-bg) px-3 py-2 text-sm text-(--color-text-primary) placeholder:text-(--color-text-tertiary) focus:border-(--color-primary) focus:outline-none"
+            />
+          </div>
           {value.trim() ? (
             <IconButton aria-label={t("composer.send")} onClick={submit}>
               <Send size={20} strokeWidth={1.75} className="text-(--color-primary)" />

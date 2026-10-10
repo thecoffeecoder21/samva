@@ -57,6 +57,13 @@
       "when": 1786968254166,
       "tag": "0007_thankful_violations",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1786984328158,
+      "tag": "0008_remarkable_blindfold",
+      "breakpoints": true
     }
   ]
 }

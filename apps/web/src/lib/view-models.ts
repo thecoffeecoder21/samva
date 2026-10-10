@@ -11,9 +11,18 @@ export interface ConversationSummary {
   unreadCount: number;
   isMuted: boolean;
   isPinned: boolean;
+  isArchived: boolean;
   isOnline?: boolean;
   /** The other member's user id, for direct conversations — lets realtime presence events be matched to the right row. */
   peerUserId?: string;
+}
+
+/** A user's personal chat-list folder/label, with the conversations currently filed under it. */
+export interface ConversationFolder {
+  id: string;
+  name: string;
+  position: number;
+  conversationIds: string[];
 }
 
 /** Denormalized view-model for a channel row — used by the Discover directory and the Communities ("my channels") list. */

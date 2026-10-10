@@ -30,13 +30,16 @@ export async function listMessages(
   const limit = Math.min(opts.limit ?? DEFAULT_PAGE_SIZE, 100);
 
   const notExpired = or(isNull(messages.expiresAt), gt(messages.expiresAt, new Date()));
+  // Thread replies are only visible from inside their thread panel, not the
+  // main timeline — see /api/conversations/[id]/messages/[messageId]/thread.
+  const topLevel = isNull(messages.threadRootId);
   const rows = await db
     .select()
     .from(messages)
     .where(
       opts.before
-        ? and(eq(messages.conversationId, conversationId), lt(messages.sequence, BigInt(opts.before)), notExpired)
-        : and(eq(messages.conversationId, conversationId), notExpired),
+        ? and(eq(messages.conversationId, conversationId), lt(messages.sequence, BigInt(opts.before)), notExpired, topLevel)
+        : and(eq(messages.conversationId, conversationId), notExpired, topLevel),
     )
     .orderBy(desc(messages.sequence))
     .limit(limit);
@@ -168,6 +171,9 @@ export function toMessageDto(
       durationMs: a.durationMs,
     })),
     replyToId: row.replyToId,
+    threadRootId: row.threadRootId,
+    threadReplyCount: row.threadReplyCount,
+    lastThreadReplyAt: row.lastThreadReplyAt?.toISOString() ?? null,
     reactions: reactionDtos,
     status: "sent",
     createdAt: row.createdAt.toISOString(),

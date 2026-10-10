@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import { getCurrentProfile, getOrCreateUser } from "@/lib/auth";
-import { getConversationSummaries } from "@/lib/queries";
+import { getConversationFolders, getConversationSummaries } from "@/lib/queries";
 import { ChatShell } from "@/components/chat/ChatShell";
 
 export default async function AppLayout({ children }: { children: ReactNode }) {
@@ -13,10 +13,12 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   if (!profile) redirect("/onboarding");
 
   const user = await getOrCreateUser();
-  const conversations = user ? await getConversationSummaries(user.id) : [];
+  const [conversations, folders] = user
+    ? await Promise.all([getConversationSummaries(user.id), getConversationFolders(user.id)])
+    : [[], []];
 
   return (
-    <ChatShell conversations={conversations} currentUserId={user!.id}>
+    <ChatShell conversations={conversations} folders={folders} currentUserId={user!.id}>
       {children}
     </ChatShell>
   );

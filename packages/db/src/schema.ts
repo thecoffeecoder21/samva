@@ -87,6 +87,12 @@ export const conversationMembers = pgTable(
     mutedUntil: timestamp("muted_until", { withTimezone: true }),
     lastReadMessageId: uuid("last_read_message_id"),
     lastReadSequence: bigserial("last_read_sequence", { mode: "bigint" }),
+    // Per-user chat-list organization — deliberately columns on the
+    // membership row (not a global conversation flag) since pinning/archiving
+    // is something each member decides for their own list, not something
+    // that should be visible to or affect other members.
+    pinnedAt: timestamp("pinned_at", { withTimezone: true }),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
   },
   (t) => [
     primaryKey({ columns: [t.conversationId, t.userId] }),
@@ -124,6 +130,13 @@ export const messages = pgTable(
     }).notNull(),
     content: text("content"),
     replyToId: uuid("reply_to_id"),
+    // Thread reply pointer, flattened to the top-level message id (never
+    // chained) — replying inside an already-open thread always points back
+    // at the same root, so a thread is always exactly two levels deep. Not a
+    // DB-level self-FK, consistent with replyToId above.
+    threadRootId: uuid("thread_root_id"),
+    threadReplyCount: integer("thread_reply_count").default(0).notNull(),
+    lastThreadReplyAt: timestamp("last_thread_reply_at", { withTimezone: true }),
     // Client-generated idempotency key so retried sends never duplicate (section 108).
     clientId: text("client_id"),
     // Opt-in full-screen send effect (iMessage-style) — set by the sender at
@@ -143,6 +156,7 @@ export const messages = pgTable(
     index("messages_conversation_sequence_idx").on(t.conversationId, t.sequence),
     uniqueIndex("messages_conversation_client_idx").on(t.conversationId, t.senderId, t.clientId),
     index("messages_expires_at_idx").on(t.expiresAt),
+    index("messages_thread_root_idx").on(t.threadRootId),
   ],
 );
 
@@ -254,6 +268,65 @@ export const pollVotes = pgTable(
   (t) => [
     primaryKey({ columns: [t.pollId, t.optionId, t.userId] }),
     index("poll_votes_poll_idx").on(t.pollId),
+  ],
+);
+
+export const conversationFolders = pgTable(
+  "conversation_folders",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    position: integer("position").default(0).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("conversation_folders_user_idx").on(t.userId)],
+);
+
+export const conversationFolderMembers = pgTable(
+  "conversation_folder_members",
+  {
+    folderId: uuid("folder_id")
+      .notNull()
+      .references(() => conversationFolders.id, { onDelete: "cascade" }),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    addedAt: timestamp("added_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.folderId, t.conversationId] })],
+);
+
+// Channel moderation: any follower can flag a message; owners/admins review
+// and either dismiss or remove it (soft-delete via messages.deletedAt).
+// Unique per (message, reporter) so re-reporting the same message no-ops
+// instead of piling up duplicate rows.
+export const messageReports = pgTable(
+  "message_reports",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    messageId: uuid("message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    reporterId: uuid("reporter_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    reason: text("reason").notNull(),
+    status: text("status", { enum: ["open", "resolved", "dismissed"] })
+      .default("open")
+      .notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolvedBy: uuid("resolved_by").references(() => users.id),
+  },
+  (t) => [
+    uniqueIndex("message_reports_message_reporter_idx").on(t.messageId, t.reporterId),
+    index("message_reports_conversation_idx").on(t.conversationId),
   ],
 );
 

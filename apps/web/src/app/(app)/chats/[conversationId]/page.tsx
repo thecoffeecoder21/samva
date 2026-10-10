@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { getOrCreateUser } from "@/lib/auth";
-import { getConversationHeader, getMemberNames } from "@/lib/queries";
+import { getConversationHeader, getConversationMembers } from "@/lib/queries";
 import { listMessages } from "@/lib/messages";
 import { ChatWindow } from "@/components/chat/ChatWindow";
 
@@ -16,10 +16,11 @@ export default async function ConversationPage({
   const header = await getConversationHeader(conversationId, user.id);
   if (!header) notFound();
 
-  const [{ messages }, memberNames] = await Promise.all([
+  const [{ messages }, members] = await Promise.all([
     listMessages(conversationId, {}, user.id),
-    getMemberNames(conversationId),
+    getConversationMembers(conversationId),
   ]);
+  const currentUsername = members.find((m) => m.userId === user.id)?.username;
 
   return (
     <ChatWindow
@@ -40,7 +41,8 @@ export default async function ConversationPage({
       initialMyRole={header.myRole}
       initialMutedUntil={header.mutedUntil}
       initialMessages={messages}
-      memberNames={memberNames}
+      members={members}
+      currentUsername={currentUsername}
     />
   );
 }

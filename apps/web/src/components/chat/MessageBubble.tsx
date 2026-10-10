@@ -1,14 +1,34 @@
 "use client";
 
 import * as React from "react";
-import { Reply, Forward, SmilePlus, MoreHorizontal, Pencil, Trash2, Clock, Check, CheckCheck, AlertCircle, Pin, Timer } from "lucide-react";
+import { Reply, Forward, SmilePlus, MoreHorizontal, Pencil, Trash2, Clock, Check, CheckCheck, AlertCircle, Pin, Timer, MessagesSquare, Flag } from "lucide-react";
 import { cn, IconButton } from "@samva/ui";
-import type { Message } from "@samva/types";
+import type { ConversationMemberSummary, Message } from "@samva/types";
 import { MessageAttachments } from "./MessageAttachments";
 import { PollMessage } from "./PollMessage";
 import { LinkPreviewCard } from "./LinkPreviewCard";
 
 const QUICK_REACTIONS = ["❤️", "😂", "🔥", "👍", "👏", "😮"];
+const MENTION_TOKEN = /(@[a-zA-Z0-9_]{1,20})\b/g;
+
+function renderWithMentions(content: string, membersByUsername: Map<string, ConversationMemberSummary>, currentUsername?: string) {
+  const parts = content.split(MENTION_TOKEN);
+  return parts.map((part, i) => {
+    if (i % 2 === 0) return part;
+    const username = part.slice(1).toLowerCase();
+    const member = membersByUsername.get(username);
+    if (!member) return part;
+    const isMe = currentUsername?.toLowerCase() === username;
+    return (
+      <span
+        key={i}
+        className={cn("rounded-(--radius-sm) px-0.5 font-medium", isMe ? "bg-(--color-primary)/25" : "bg-(--color-primary)/10 text-(--color-primary)")}
+      >
+        {part}
+      </span>
+    );
+  });
+}
 
 export interface MessageBubbleProps {
   message: Message;
@@ -18,6 +38,8 @@ export interface MessageBubbleProps {
   senderName?: string;
   replyToMessage?: Message | null;
   currentUserId: string;
+  members?: ConversationMemberSummary[];
+  currentUsername?: string;
   onReply: (message: Message) => void;
   onReact: (message: Message, emoji: string) => void;
   onEdit: (message: Message) => void;
@@ -25,6 +47,8 @@ export interface MessageBubbleProps {
   onForward: (message: Message) => void;
   onTogglePin: (message: Message) => void;
   onVote: (message: Message, optionId: string) => void;
+  onOpenThread?: (message: Message) => void;
+  onReport?: (message: Message) => void;
 }
 
 export function MessageBubble({
@@ -35,6 +59,8 @@ export function MessageBubble({
   senderName,
   replyToMessage,
   currentUserId,
+  members = [],
+  currentUsername,
   onReply,
   onReact,
   onEdit,
@@ -42,10 +68,17 @@ export function MessageBubble({
   onForward,
   onTogglePin,
   onVote,
+  onOpenThread,
+  onReport,
 }: MessageBubbleProps) {
   const [pickerOpen, setPickerOpen] = React.useState(false);
   const [menuOpen, setMenuOpen] = React.useState(false);
   const deleted = Boolean(message.deletedAt);
+
+  const membersByUsername = React.useMemo(
+    () => new Map(members.map((m) => [m.username.toLowerCase(), m])),
+    [members],
+  );
 
   const reactionCounts = React.useMemo(() => {
     const counts = new Map<string, { count: number; reactedByMe: boolean }>();
@@ -92,7 +125,7 @@ export function MessageBubble({
               {message.linkPreview && <LinkPreviewCard preview={message.linkPreview} isOwn={isOwn} />}
               {message.content && (
                 <p className={cn("whitespace-pre-wrap break-words", message.attachments.length > 0 && "mt-1.5")}>
-                  {message.content}
+                  {membersByUsername.size > 0 ? renderWithMentions(message.content, membersByUsername, currentUsername) : message.content}
                 </p>
               )}
             </>
@@ -131,6 +164,11 @@ export function MessageBubble({
             <IconButton aria-label="Reply" size="sm" onClick={() => onReply(message)}>
               <Reply size={16} />
             </IconButton>
+            {onOpenThread && !message.threadRootId && (
+              <IconButton aria-label="Reply in thread" size="sm" onClick={() => onOpenThread(message)}>
+                <MessagesSquare size={16} />
+              </IconButton>
+            )}
             <IconButton aria-label="Forward" size="sm" onClick={() => onForward(message)}>
               <Forward size={16} />
             </IconButton>
@@ -171,12 +209,36 @@ export function MessageBubble({
                       <Trash2 size={14} /> Delete
                     </button>
                   )}
+                  {!isOwn && onReport && (
+                    <button
+                      className="flex items-center gap-2 rounded-(--radius-sm) px-2 py-1.5 text-left text-xs text-(--color-danger) hover:bg-(--color-surface-raised)"
+                      onClick={() => {
+                        onReport(message);
+                        setMenuOpen(false);
+                      }}
+                    >
+                      <Flag size={14} /> Report
+                    </button>
+                  )}
                 </div>
               )}
             </div>
           </div>
         )}
       </div>
+
+      {!message.threadRootId && message.threadReplyCount > 0 && onOpenThread && (
+        <button
+          onClick={() => onOpenThread(message)}
+          className={cn(
+            "flex items-center gap-1.5 rounded-(--radius-md) px-2 py-1 text-xs text-(--color-primary) hover:bg-(--color-surface-raised)",
+            isOwn && "self-end",
+          )}
+        >
+          <MessagesSquare size={13} />
+          {message.threadReplyCount} {message.threadReplyCount === 1 ? "reply" : "replies"}
+        </button>
+      )}
 
       {reactionCounts.size > 0 && (
         <div className={cn("flex flex-wrap gap-1", isOwn && "justify-end")}>

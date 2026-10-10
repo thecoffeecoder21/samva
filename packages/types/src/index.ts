@@ -121,6 +121,9 @@ export interface Message {
   expiresAt: string | null;
   effect: MessageEffect | null;
   replyToId: ID | null;
+  threadRootId: ID | null;
+  threadReplyCount: number;
+  lastThreadReplyAt: string | null;
   reactions: Reaction[];
   status: MessageStatus;
   createdAt: string;
@@ -162,4 +165,13 @@ export type RealtimeEvent =
   | { type: "conversation.member_added"; payload: { conversationId: ID; member: ConversationMemberSummary } }
   | { type: "conversation.member_removed"; payload: { conversationId: ID; userId: ID } }
   | { type: "conversation.member_role_changed"; payload: { conversationId: ID; userId: ID; role: ConversationRole } }
-  | { type: "conversation.muted_updated"; payload: { conversationId: ID; userId: ID; mutedUntil: string | null } };
+  | { type: "conversation.muted_updated"; payload: { conversationId: ID; userId: ID; mutedUntil: string | null } }
+  | {
+      type: "message.thread_reply";
+      payload: { conversationId: ID; rootMessageId: ID; message: Message; threadReplyCount: number; lastThreadReplyAt: string };
+    }
+  | {
+      type: "conversation.list_state_updated";
+      payload: { conversationId: ID; userId: ID; isPinned: boolean; isArchived: boolean };
+    }
+  | { type: "message.reported"; payload: { conversationId: ID; messageId: ID } };

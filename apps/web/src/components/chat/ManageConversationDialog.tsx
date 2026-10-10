@@ -5,6 +5,8 @@ import { X, Shield, ShieldOff, UserMinus, Crown } from "lucide-react";
 import { Avatar, Button, IconButton, Input, cn } from "@samva/ui";
 import type { ConversationMemberSummary, ConversationRole, ConversationType } from "@samva/types";
 import { classifyFile, uploadAttachment } from "@/lib/uploadFile";
+import { ChannelAnalyticsView } from "./ChannelAnalyticsView";
+import { ChannelReportsPanel } from "./ChannelReportsPanel";
 
 export interface ManageConversationDialogProps {
   open: boolean;
@@ -35,7 +37,9 @@ export function ManageConversationDialog({
 }: ManageConversationDialogProps) {
   const canEdit = myRole === "owner" || myRole === "admin";
   const noun = type === "channel" ? "channel" : "group";
+  const showAdminTabs = type === "channel" && canEdit;
 
+  const [tab, setTab] = React.useState<"info" | "reports" | "analytics">("info");
   const [members, setMembers] = React.useState<ConversationMemberSummary[]>([]);
   const [loadingMembers, setLoadingMembers] = React.useState(false);
   const [nameDraft, setNameDraft] = React.useState(name);
@@ -60,6 +64,7 @@ export function ManageConversationDialog({
       setDescriptionDraft(description ?? "");
       setError(null);
       setLoadingMembers(true);
+      setTab("info");
     }
   }
 
@@ -212,6 +217,27 @@ export function ManageConversationDialog({
           </IconButton>
         </div>
 
+        {showAdminTabs && (
+          <div className="mb-3 flex gap-1 border-b border-(--color-border)">
+            {(["info", "reports", "analytics"] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                className={cn(
+                  "-mb-px border-b-2 px-2 py-1.5 text-xs font-medium capitalize",
+                  tab === t ? "border-(--color-primary) text-(--color-primary)" : "border-transparent text-(--color-text-secondary)",
+                )}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {tab === "reports" && showAdminTabs && <ChannelReportsPanel conversationId={conversationId} />}
+        {tab === "analytics" && showAdminTabs && <ChannelAnalyticsView conversationId={conversationId} />}
+
+        {tab === "info" && (
         <div className="flex flex-1 flex-col gap-4 overflow-y-auto">
           <div className="flex flex-col items-center gap-2">
             <div className="relative">
@@ -337,6 +363,7 @@ export function ManageConversationDialog({
             )}
           </div>
         </div>
+        )}
       </div>
     </div>
   );

@@ -1,6 +1,8 @@
 import "server-only";
 import { and, count, desc, eq, gt, ilike, inArray, ne, or } from "drizzle-orm";
 import {
+  conversationFolderMembers,
+  conversationFolders,
   conversationMembers,
   conversations,
   getDb,
@@ -12,7 +14,7 @@ import {
 import type { ConversationMemberSummary, ConversationRole, ConversationType } from "@samva/types";
 import { getOnlineStatuses } from "./presence";
 import { didIBlockThem, isBlocked } from "./blocks";
-import type { ChannelSummary, ConversationSummary } from "./view-models";
+import type { ChannelSummary, ConversationFolder, ConversationSummary } from "./view-models";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -24,11 +26,21 @@ export async function getConversationSummaries(userId: string): Promise<Conversa
       conversation: conversations,
       mutedUntil: conversationMembers.mutedUntil,
       lastReadSequence: conversationMembers.lastReadSequence,
+      pinnedAt: conversationMembers.pinnedAt,
+      archivedAt: conversationMembers.archivedAt,
     })
     .from(conversationMembers)
     .innerJoin(conversations, eq(conversations.id, conversationMembers.conversationId))
     .where(eq(conversationMembers.userId, userId))
     .orderBy(desc(conversations.lastMessageAt));
+
+  // Pinned conversations float to the top (most-recently-pinned first),
+  // ahead of the normal recency ordering applied by the query above.
+  memberships.sort((a, b) => {
+    if (Boolean(a.pinnedAt) !== Boolean(b.pinnedAt)) return a.pinnedAt ? -1 : 1;
+    if (a.pinnedAt && b.pinnedAt) return b.pinnedAt.getTime() - a.pinnedAt.getTime();
+    return 0;
+  });
 
   if (memberships.length === 0) return [];
 
@@ -47,7 +59,7 @@ export async function getConversationSummaries(userId: string): Promise<Conversa
 
   const onlineStatuses = await getOnlineStatuses([...peers.values()].map((p) => p.userId));
 
-  return memberships.map(({ conversation: c, mutedUntil }) => {
+  return memberships.map(({ conversation: c, mutedUntil, pinnedAt, archivedAt }) => {
     const last = lastMessages.get(c.id);
     const peer = peers.get(c.id);
     const isDirect = c.type === "direct";
@@ -61,7 +73,8 @@ export async function getConversationSummaries(userId: string): Promise<Conversa
       lastMessageAt: (last?.createdAt ?? c.lastMessageAt)?.toISOString() ?? null,
       unreadCount: unreadCounts.get(c.id) ?? 0,
       isMuted: Boolean(mutedUntil && mutedUntil > new Date()),
-      isPinned: false,
+      isPinned: Boolean(pinnedAt),
+      isArchived: Boolean(archivedAt),
       isOnline: isDirect && peer ? (onlineStatuses.get(peer.userId) ?? false) : undefined,
       peerUserId: isDirect ? peer?.userId : undefined,
     } satisfies ConversationSummary;
@@ -289,6 +302,35 @@ export async function getMyChannels(userId: string): Promise<ChannelSummary[]> {
   );
 }
 
+export async function getConversationFolders(userId: string): Promise<ConversationFolder[]> {
+  const db = getDb();
+  const folderRows = await db
+    .select()
+    .from(conversationFolders)
+    .where(eq(conversationFolders.userId, userId))
+    .orderBy(conversationFolders.position, conversationFolders.createdAt);
+  if (folderRows.length === 0) return [];
+
+  const memberRows = await db
+    .select({ folderId: conversationFolderMembers.folderId, conversationId: conversationFolderMembers.conversationId })
+    .from(conversationFolderMembers)
+    .where(inArray(conversationFolderMembers.folderId, folderRows.map((f) => f.id)));
+
+  const conversationIdsByFolder = new Map<string, string[]>();
+  for (const row of memberRows) {
+    const list = conversationIdsByFolder.get(row.folderId);
+    if (list) list.push(row.conversationId);
+    else conversationIdsByFolder.set(row.folderId, [row.conversationId]);
+  }
+
+  return folderRows.map((f) => ({
+    id: f.id,
+    name: f.name,
+    position: f.position,
+    conversationIds: conversationIdsByFolder.get(f.id) ?? [],
+  }));
+}
+
 export interface PublicProfile {
   userId: string;
   username: string;
@@ -312,17 +354,6 @@ export async function getPublicProfileByUsername(username: string): Promise<Publ
     statusEmoji: profile.statusEmoji,
     statusText: profile.statusText,
   };
-}
-
-export async function getMemberNames(conversationId: string): Promise<Record<string, string>> {
-  const db = getDb();
-  const rows = await db
-    .select({ userId: conversationMembers.userId, displayName: profiles.displayName })
-    .from(conversationMembers)
-    .innerJoin(profiles, eq(profiles.userId, conversationMembers.userId))
-    .where(eq(conversationMembers.conversationId, conversationId));
-
-  return Object.fromEntries(rows.map((r) => [r.userId, r.displayName]));
 }
 
 async function getUnreadCounts(

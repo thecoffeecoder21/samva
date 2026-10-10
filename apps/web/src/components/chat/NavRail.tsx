@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { MessageCircle, Users, Phone, Compass, CircleUserRound } from "lucide-react";
-import { Badge, cn } from "@samva/ui";
+import { MessageCircle, Users, Phone, Compass, CircleUserRound, Search } from "lucide-react";
+import { Badge, IconButton, cn } from "@samva/ui";
 import { useT } from "@/lib/i18n/I18nProvider";
 
 const items = [
@@ -14,7 +14,7 @@ const items = [
   { href: "/profile", key: "nav.profile", icon: CircleUserRound },
 ] as const;
 
-export function NavRail({ unreadCount = 0 }: { unreadCount?: number }) {
+export function NavRail({ unreadCount = 0, onOpenSearch }: { unreadCount?: number; onOpenSearch?: () => void }) {
   const pathname = usePathname();
   const t = useT();
   return (
@@ -22,6 +22,11 @@ export function NavRail({ unreadCount = 0 }: { unreadCount?: number }) {
       aria-label="Primary"
       className="flex h-full w-16 flex-col items-center gap-1 border-r border-(--color-border) bg-(--color-surface) py-4"
     >
+      {onOpenSearch && (
+        <IconButton aria-label="Search (Ctrl+K)" title="Search (Ctrl+K)" onClick={onOpenSearch} className="mb-2">
+          <Search size={20} strokeWidth={1.75} />
+        </IconButton>
+      )}
       {items.map(({ href, key, icon: Icon }) => {
         const active = pathname.startsWith(href);
         const label = t(key);
